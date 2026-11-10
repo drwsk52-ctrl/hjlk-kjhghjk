@@ -650,18 +650,21 @@ form.addEventListener('submit',async function(e){
     if(!response.ok)throw new Error(response.status===401||response.status===403?'قواعد Firebase مانعة قراءة الأكواد. راجع صلاحيات Realtime Database.':'تعذّر قراءة بيانات الكود من Firebase.');
     var student=await response.json();
     if(!student||typeof student!=='object')throw new Error('الكود غير صحيح. راجع الكود وحاول تاني.');
-    if(student.active===false)throw new Error('الكود غير مفعل. تواصل مع الإدارة.');
-    if(student.status && !['نشط','active','فعال'].includes(String(student.status).trim().toLowerCase())){
-      var st=String(student.status).trim();
-      throw new Error(st==='منتهي'?'الكود منتهي الصلاحية. تواصل مع الإدارة للتجديد.':st==='موقوف'?'الكود موقوف. تواصل مع الإدارة.':'الكود غير نشط حاليًا. تواصل مع الإدارة.');
+    // active هو الحقل الأساسي في سجل Firebase؛ لا نرفض الكود بسبب status قديم أو مختلف إذا كان active=true.
+    var statusText=String(student.status||'').trim().toLowerCase();
+    var explicitlyInactive=['منتهي','موقوف','غير نشط','غير مفعل','inactive','disabled','expired','suspended','stopped'];
+    if(student.active===false || (student.active!==true && explicitlyInactive.includes(statusText))){
+      throw new Error(statusText==='منتهي'||statusText==='expired'?'الكود منتهي الصلاحية. تواصل مع الإدارة للتجديد.':'الكود غير مفعل حاليًا. تواصل مع الإدارة.');
     }
-    if(!student.branchId)throw new Error('الكود موجود لكن الشعبة غير محددة له في Firebase.');
-    var duration=String(student.durationType||student.duration||student.type||'').trim().toLowerCase();
-    var isTerm=duration==='ترم'||duration==='الترم'||duration==='term'||duration==='semester'||duration==='الفصل الدراسي';
-    // انتهاء كود الترم ثابت عند منتصف ليل 1 يناير 2027 بتوقيت مصر (UTC+2).
-    var termExpiry=Date.UTC(2026,11,31,22,0,0);
-    var expires=isTerm?termExpiry:expiryMillis(student.expiresAt);
+    if(!student.branchId && !student.section && !student.branch)throw new Error('الكود موجود لكن الشعبة غير محددة له في Firebase.');
+    // افحص كل حقول نوع الاشتراك؛ أحيانًا durationType لا يطابق type.
+    var durationValues=[student.durationType,student.duration,student.type,student.plan].filter(Boolean).map(function(x){return String(x).trim().toLowerCase()});
+    var isTerm=durationValues.some(function(duration){return ['ترم','الترم','term','semester','الفصل الدراسي'].includes(duration)});
+    // انتهاء كود الترم بنهاية يوم 1 يناير 2027 بتوقيت مصر (UTC+2).
+    var termExpiry=Date.UTC(2027,0,1,21,59,59,999);
+    var expires=isTerm?termExpiry:expiryMillis(student.expiresAt||student.expiry||student.expires);
     if(expires && expires<=Date.now())throw new Error('انتهت صلاحية الكود. تواصل مع الإدارة للتجديد.');
+
     // نفس المفتاح الذي تقرأه subjects.html؛ لا يوجد سيرفر وسيط.
     var studentName=student.studentName||student.name||'';
     var session={name:studentName,studentName:studentName,branchId:student.branchId,code:v,expiresAt:expires||0,lastLoginAt:Date.now()};
